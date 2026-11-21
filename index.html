@@ -28,6 +28,7 @@ let mood = 80, elapsed = 0, ph = 0, tNow = 0;
 let coins = 0, danceTime = 0, weepTime = 0, drain = 5;
 let flying = [], tears = [], notes = [];
 let cupX = 500, cupY = 330, cupShake = 0, crank = 0;
+let man = null, cut = 0, over = false, overTime = 0, lowTime = 0, sawTimer = 0, blood = [];   // the man with the chainsaw
 
 // How much dancing / glaring / crying, each from 0 to 1, based on mood
 function levels() {
@@ -51,13 +52,16 @@ function tone(f, dur, type, vol, f2) {
 }
 
 /* ---------- Input ---------- */
+function restart() {
+  state = 'play'; mood = 80; elapsed = 0; coins = 0; danceTime = 0; weepTime = 0;
+  man = null; cut = 0; over = false; overTime = 0; lowTime = 0; blood = []; flying = []; tears = [];
+}
 function toss(x, y) {
   if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
   if (ac && ac.state === 'suspended') ac.resume();
-  if (state === 'title') {
-    state = 'play'; mood = 80; elapsed = 0; coins = 0; danceTime = 0; weepTime = 0;
-    return;
-  }
+  if (state === 'title') { restart(); return; }
+  if (over) { if (overTime > 2.5) restart(); return; }
+  if (cut > 0) return;                                  // too late to tip him
   flying.push({ x0: x, y0: y, u: 0 });
 }
 cv.addEventListener('pointerdown', e => {
@@ -76,8 +80,9 @@ function update(dt) {
   tears = tears.filter(t => t.life > 0);
   notes.forEach(n => { n.y -= 30 * dt; n.x += Math.sin(n.y * 0.05) * 0.4; n.life -= dt; });
   notes = notes.filter(n => n.life > 0);
+  blood.forEach(b => { if (!b.landed) { b.vy += 700 * dt; b.x += b.vx * dt; b.y += b.vy * dt; if (b.y > b.gy) { b.y = b.gy; b.landed = true; } } });
 
-  if (state === 'play') {
+  if (state === 'play' && cut === 0 && !over) {
     elapsed += dt;
     drain = 5 + Math.min(elapsed / 25, 9);              // gets pickier over time
     mood = clamp(mood - drain * dt, 0, 100);
@@ -87,13 +92,48 @@ function update(dt) {
   crank += dt * L.d * 8;
 
   if (state !== 'play') return;
+  if (over) { overTime += dt; return; }
+
+  // ----- the man with the chainsaw -----
+  // He shows up if patience stays near zero, walks slowly toward the monkey,
+  // and leaves again if you tip enough. If he gets there, he does it.
+  lowTime = mood < 8 ? lowTime + dt : 0;
+  if (!man && lowTime > 1.5) man = { x: W + 70, moving: true, wait: 0 };
+  if (man && cut === 0) {
+    if (mood > 22) { man.x += 140 * dt; man.moving = true; man.wait = 0; if (man.x > W + 90) man = null; }
+    else if (mood < 12) {
+      if (man.x > MX + 190) { man.x = Math.max(MX + 190, man.x - 45 * dt); man.moving = true; }
+      else { man.moving = false; man.wait += dt; if (man.wait > 2.2) cut = 0.001; }
+    } else man.moving = false;
+  }
+  if (cut > 0) {
+    cut += dt; mood = 0;
+    man.x = cut < 1.2 ? MX + 190 - 58 * (cut / 1.2) : MX + 132 + Math.sin(cut * 40) * 1.5;
+    if (cut > 1 && cut < 3.6) {
+      for (let i = 0, n = Math.round(dt * 180); i < n; i++)
+        blood.push({ x: MX + (Math.random() - .5) * 30, y: GROUND - 90 + (Math.random() - .5) * 30,
+                     vx: -240 + Math.random() * 330, vy: -80 - Math.random() * 300,
+                     gy: GROUND + 4 + Math.random() * 50, r: 2 + Math.random() * 3.5 });
+    }
+    if (cut > 4.4) { over = true; overTime = 0; }
+  }
+  if (man) {
+    sawTimer -= dt;
+    if (sawTimer <= 0) {
+      sawTimer = 0.07;
+      const rev = cut > 0 ? 1 : man.moving ? 0.4 : 0.8;
+      tone(80 + rev * 70 + Math.random() * 25, 0.1, 'sawtooth', 0.02 + 0.04 * rev);
+      if (cut > 1.2 && Math.random() < 0.5) tone(40 + Math.random() * 30, 0.12, 'square', 0.06);
+    }
+  }
+
   if (L.d > 0.3) danceTime += dt;
   if (L.c > 0.3) weepTime += dt;
 
   // coins in flight: when one reaches the cup, it counts
   for (const f of flying) {
     f.u += dt / 0.45;
-    if (f.u >= 1) { mood = clamp(mood + 8, 0, 100); coins++; cupShake = 1; tone(1300, 0.12, 'square', 0.04, 1900); }
+    if (f.u >= 1) { if (cut === 0) { mood = clamp(mood + 8, 0, 100); coins++; } cupShake = 1; tone(1300, 0.12, 'square', 0.04, 1900); }
   }
   flying = flying.filter(f => f.u < 1);
 
@@ -107,7 +147,7 @@ function update(dt) {
   if (L.d > 0.3 && Math.random() < dt * 2 * L.d) notes.push({ x: 170 + Math.random() * 60, y: GROUND - 110, life: 2 });
 
   // the whimper
-  if (L.c > 0.3) {
+  if (L.c > 0.3 && cut === 0) {
     whimperTimer -= dt;
     if (whimperTimer <= 0) { tone(480, 0.8, 'triangle', 0.05 * L.c, 230); whimperTimer = 1.3 - 0.6 * L.c + Math.random() * 0.5; }
   }
@@ -189,6 +229,7 @@ function drawMonkey(L) {
   ell(0, -88, 38, 48, BR);
   ell(0, -84, 39, 38, '#a3162a');
   ctx.fillStyle = CR; ctx.beginPath(); ctx.moveTo(-13, -120); ctx.lineTo(13, -120); ctx.lineTo(0, -68); ctx.fill();
+  if (cut > 1) drawWound(clamp((cut - 1) / 1.6, 0, 1));
 
   // free arm: waves when he dances, hangs when he doesn't
   const wv = Math.sin(ph + 1);
@@ -280,7 +321,66 @@ function drawMonkey(L) {
   ctx.restore();  // body
 }
 
+// a crude jagged red opening in the chest, growing from 0 to 1
+function drawWound(k) {
+  const pts = [[0,-118],[.6,-108],[.3,-98],[1,-88],[.4,-76],[.8,-66],[0,-58],[-.7,-68],[-.3,-78],[-1,-90],[-.4,-100],[-.7,-110]];
+  const path = sc => {
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = p[0] * 22 * k * sc + Math.sin(tNow * 30 + i) * 1.5 * k, y = p[1];
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    });
+    ctx.closePath();
+  };
+  path(1); ctx.fillStyle = '#4d050d'; ctx.fill();
+  path(0.62); ctx.fillStyle = '#a3162a'; ctx.fill();
+  ctx.fillStyle = '#3a0409';
+  ctx.beginPath(); ctx.ellipse(-3 * k, -92, 6 * k, 9 * k, 0.3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(5 * k, -80, 5 * k, 7 * k, -0.2, 0, Math.PI * 2); ctx.fill();
+}
+
+// the man: a flat black shape with a blank pale face, holding a chainsaw
+function drawMan() {
+  if (!man) return;
+  const x = man.x, sawing = cut > 0, BLK = '#0c0a0f', SK = '#cfc7b8';
+  const bob = man.moving ? Math.abs(Math.sin(tNow * 6)) * 4 : 0, sw = man.moving ? Math.sin(tNow * 6) * 14 : 0;
+  const by = GROUND - bob, sy = by - 88;
+  ctx.save(); ctx.translate(sawing ? (Math.random() - .5) * 3 : 0, 0);
+  limb(x - 10, by - 100, x - 10 + sw, by - 6, 17, BLK); limb(x + 12, by - 100, x + 12 - sw, by - 6, 17, BLK);
+  ctx.fillStyle = BLK; ctx.beginPath(); ctx.moveTo(x - 30, by - 218); ctx.lineTo(x + 28, by - 218); ctx.lineTo(x + 38, by - 85); ctx.lineTo(x - 38, by - 85); ctx.closePath(); ctx.fill();
+  ell(x - 4, by - 244, 23, 23, BLK);                    // hood
+  ell(x - 10, by - 242, 14, 18, SK);                    // blank face
+  limb(x - 22, by - 205, x - 52, by - 96, 15, BLK); limb(x + 18, by - 205, x - 6, by - 100, 15, BLK);
+  // chainsaw: grey bar with a moving chain, orange body
+  ctx.fillStyle = '#9aa0a6'; ctx.fillRect(x - 120, sy - 6, 62, 12);
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+  ctx.lineDashOffset = -tNow * 160 * (sawing || !man.moving ? 1 : 0.3);
+  ctx.beginPath(); ctx.moveTo(x - 120, sy - 6); ctx.lineTo(x - 58, sy - 6); ctx.moveTo(x - 120, sy + 6); ctx.lineTo(x - 58, sy + 6); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#e8731a'; ctx.fillRect(x - 62, sy - 16, 50, 30);
+  ctx.fillStyle = '#222'; ctx.fillRect(x - 14, sy - 12, 16, 22);
+  ell(x - 52, sy + 4, 8, 8, BLK); ell(x - 8, sy + 8, 8, 8, BLK);
+  ctx.restore();
+}
+
+function drawOver() {
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#b3182c'; ctx.font = 'italic 34px Georgia, serif';
+  ctx.fillText("He didn't even try to run.", W / 2, 230);
+  if (overTime > 1.2) {
+    ctx.globalAlpha = clamp((overTime - 1.2) / 1, 0, 1); ctx.fillStyle = '#8a8070'; ctx.font = '17px Georgia, serif';
+    ctx.fillText('Coins tipped: ' + coins + '   Danced for ' + danceTime.toFixed(0) + 's   Wept for ' + weepTime.toFixed(0) + 's', W / 2, 280);
+    ctx.globalAlpha = 1;
+  }
+  if (overTime > 2.5) {
+    ctx.globalAlpha = 0.5 + 0.5 * Math.sin(tNow * 3); ctx.fillStyle = '#e8d9b0'; ctx.font = 'bold 20px Georgia, serif';
+    ctx.fillText('Click to try again', W / 2, 350); ctx.globalAlpha = 1;
+  }
+}
+
 function drawEffects() {
+  for (const b of blood) { ctx.fillStyle = '#8f0f1c'; ctx.beginPath(); ctx.ellipse(b.x, b.y, b.r, b.landed ? b.r * 0.5 : b.r, 0, 0, Math.PI * 2); ctx.fill(); }
   for (const t of tears) { ctx.fillStyle = 'rgba(170,215,255,' + clamp(t.life, 0, 0.85) + ')'; ctx.beginPath(); ctx.ellipse(t.x, t.y, 2.2, 3.6, 0, 0, Math.PI * 2); ctx.fill(); }
   for (const f of flying) {
     const x = f.x0 + (cupX - f.x0) * f.u, y = f.y0 + (cupY - f.y0) * f.u - Math.sin(Math.PI * f.u) * 70;
@@ -308,7 +408,7 @@ function drawHUD(L) {
   ctx.fillStyle = '#f2c94c'; ctx.fillText('He expects about ' + (drain / 8).toFixed(1) + ' coins a second', W - 18, 94);
 
   const m = mood;
-  const line = m > 80 ? "He's happy. For now." : m > 60 ? "Don't stop now." : m > 40 ? 'His dance is slowing...' :
+  const line = man ? (mood > 22 ? 'The man is leaving. For now.' : 'Someone is coming.') : m > 80 ? "He's happy. For now." : m > 60 ? "Don't stop now." : m > 40 ? 'His dance is slowing...' :
                m > 22 ? 'He is staring at you.' : m > 8 ? 'His lip is trembling.' : 'Look what you have done.';
   ctx.textAlign = 'center'; ctx.font = 'italic 22px Georgia, serif';
   ctx.fillStyle = m > 40 ? '#e8d9b0' : m > 22 ? '#e8a07a' : '#d9534f';
@@ -335,12 +435,18 @@ function drawTitle() {
 
 function draw() {
   const L = levels();
-  drawBG(L); drawOrgan(L); drawMonkey(L); drawEffects();
+  const sh = cut > 1 ? 5 : 0;
+  ctx.save(); ctx.translate((Math.random() - .5) * sh, (Math.random() - .5) * sh);
+  drawBG(L); drawOrgan(L);
+  if (cut > 1) { const k = clamp((cut - 1) / 1.6, 0, 1); ell(MX, GROUND + 24, 20 + k * 90, 4 + k * 16, '#4d050d'); }
+  drawMonkey(L); drawMan(); drawEffects();
+  ctx.restore();
   // the room gets darker as he gets angrier
   const v = ctx.createRadialGradient(W / 2, H / 2, 150, W / 2, H / 2, 520);
   v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,' + (0.3 + 0.5 * L.g) + ')');
   ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
-  if (state === 'title') drawTitle(); else drawHUD(L);
+  if (cut > 3.3) { ctx.fillStyle = 'rgba(0,0,0,' + clamp((cut - 3.3) / 0.9, 0, 1) + ')'; ctx.fillRect(0, 0, W, H); }
+  if (state === 'title') drawTitle(); else if (over) drawOver(); else if (cut === 0) drawHUD(L);
 }
 
 let last = 0;
