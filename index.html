@@ -20,7 +20,7 @@
    - The monkey's look is worked out from mood: dancing -> slowing -> glaring -> crying. */
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-const W = 800, H = 520, GROUND = 440, MX = 420, WORLD = 3000, ENDCAM = 2150, PX = 2480;   // PX = where his father lies          // MX = monkey's x position
+const W = 800, H = 520, GROUND = 440, MX = 420, WORLD = 3000, ENDCAM = 2150, PX = 2480, GOAL = 750;   // PX = where his father lies, GOAL = coins needed to pay for rehab          // MX = monkey's x position
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 let state = 'title';                 // 'title' or 'play'
@@ -29,6 +29,7 @@ let coins = 0, danceTime = 0, weepTime = 0, drain = 5;
 let flying = [], tears = [], notes = [];
 let cupX = 500, cupY = 330, cupShake = 0, crank = 0;
 let pan = 0, over = false, overTime = 0, lowTime = 0, sawTimer = 0, glance = 0, cam = 0, camV = 0;   // the ending
+let win = 0, monkeyX = MX, runBoost = 0, sparks = [], hearts = [], winSfx = {};   // the good ending
 
 // How much dancing / glaring / crying, each from 0 to 1, based on mood
 function levels() {
@@ -55,11 +56,13 @@ function tone(f, dur, type, vol, f2) {
 function restart() {
   state = 'play'; mood = 80; elapsed = 0; coins = 0; danceTime = 0; weepTime = 0;
   pan = 0; over = false; overTime = 0; lowTime = 0; glance = 0; cam = 0; camV = 0; flying = []; tears = [];
+  win = 0; monkeyX = MX; runBoost = 0; sparks = []; hearts = []; winSfx = {};
 }
 function toss(x, y) {
   if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
   if (ac && ac.state === 'suspended') ac.resume();
   if (state === 'title') { restart(); return; }
+  if (win > 0) { if (win > 17) restart(); return; }
   if (over) { if (overTime > 2) restart(); return; }
   if (pan > 0) return;                                  // too late to tip him
   flying.push({ x0: x + cam, y0: y, u: 0 });
@@ -80,18 +83,33 @@ function update(dt) {
   tears = tears.filter(t => t.life > 0);
   notes.forEach(n => { n.y -= 30 * dt; n.x += Math.sin(n.y * 0.05) * 0.4; n.life -= dt; });
   notes = notes.filter(n => n.life > 0);
+  sparks.forEach(p => { p.vy += 200 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }); sparks = sparks.filter(p => p.life > 0);
+  hearts.forEach(h => { h.y -= 40 * dt; h.life -= dt; }); hearts = hearts.filter(h => h.life > 0);
 
-  if (state === 'play' && pan === 0 && !over) {
+  if (state === 'play' && pan === 0 && win === 0 && !over) {
     elapsed += dt;
-    drain = 5 + Math.min(elapsed / 25, 9);              // gets pickier over time
+    drain = 6 + Math.min(elapsed * 0.8, 50);              // gets pickier over time
     mood = clamp(mood - drain * dt, 0, 100);
   }
   const L = levels();
-  ph += dt * (2 + 6 * L.d);
+  ph += dt * (2 + 6 * L.d + runBoost);
   crank += dt * L.d * 8;
 
   if (state !== 'play') return;
   if (over) { overTime += dt; return; }
+
+  // ----- the good ending: he has raised enough for rehab -----
+  // He celebrates, runs to the hospital doors with the cup, the doors open and the sign is stamped
+  // PAID, then he runs on to his parents, who are sitting up and safe.
+  runBoost = 0;
+  if (win > 0) {
+    win += dt; mood = 100;
+    if (win < 3.2) for (let i = 0; i < 2; i++) sparks.push({ x: cupX, y: cupY, vx: (Math.random() - .5) * 160, vy: -60 - Math.random() * 140, life: 0.9 });
+    const goal = win < 11 ? 1840 : 2370;                      // first the hospital doors, then his parents
+    if (win > 3 && monkeyX < goal) { monkeyX = Math.min(goal, monkeyX + 320 * dt); runBoost = 8; }
+    if (win > 8 && !winSfx.door) { winSfx.door = 1; tone(150, 0.25, 'square', 0.07, 90); }
+    if (win > 11.5 && monkeyX > 2340 && Math.random() < dt * 4) hearts.push({ x: PX + 60 + (Math.random() - .5) * 260, y: GROUND - 60, life: 2.4 });
+  }
 
   // ----- the ending -----
   // While his patience sits at the bottom, the camera starts to slowly drift sideways, as if
@@ -103,9 +121,9 @@ function update(dt) {
     pan += dt; mood = Math.max(0, mood - 4 * dt);
     sawTimer -= dt;
     if (sawTimer <= 0) { tone(55, 2.6, 'sine', 0.04 * clamp(pan / 3, 0, 1)); sawTimer = 2.4; }   // a low hum fades in
-    if (pan > 15) { over = true; overTime = 0; }
+    if (pan > 24) { over = true; overTime = 0; }
   }
-  const camTarget = pan > 0 ? Math.min(ENDCAM, 70 + 300 * pan) : clamp((lowTime - 1.2) / 2.8, 0, 1) * 70;
+  const camTarget = win > 0 ? clamp(monkeyX - 420, 0, ENDCAM) : pan > 0 ? camPath(pan) : clamp((lowTime - 1.2) / 2.8, 0, 1) * 70;
   camV += ((camTarget - cam) * 5 - camV * 4.47) * dt;       // a smooth spring: the camera eases in and settles gently
   cam += camV * dt;
 
@@ -115,7 +133,10 @@ function update(dt) {
   // coins in flight: when one reaches the cup, it counts
   for (const f of flying) {
     f.u += dt / 0.45;
-    if (f.u >= 1) { if (pan === 0) { mood = clamp(mood + 8, 0, 100); coins++; } cupShake = 1; tone(1300, 0.12, 'square', 0.04, 1900); }
+    if (f.u >= 1) { if (pan === 0 && win === 0) {
+      mood = clamp(mood + 8, 0, 100); coins++;
+      if (coins >= GOAL) { win = 0.001; mood = 100; [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.35, 'triangle', 0.09), i * 140)); }
+    } cupShake = 1; tone(1300, 0.12, 'square', 0.04, 1900); }
   }
   flying = flying.filter(f => f.u < 1);
 
@@ -286,7 +307,7 @@ function flyer(x, y, col) {                                  // small torn notic
 function drawStreetProps() {
   // on the walls
   drainpipe(40); drainpipe(1690); drainpipe(2190);
-  flyer(560, 210, '#b9b08a'); flyer(588, 238, '#8fa3b0'); flyer(1110, 280, '#c4a98a'); flyer(1495, 250, '#a8b08a');
+  flyer(560, 210, '#b9b08a'); flyer(588, 238, '#8fa3b0'); flyer(1160, 300, '#c4a98a'); flyer(1495, 250, '#a8b08a');
   boardedWindow(900, 160); boardedWindow(1600, 150); graffiti(1510, 250);
   // on the ground
   boxes(55); trashCan(735, 0, true); bagPile(790);
@@ -297,24 +318,47 @@ function drawStreetProps() {
 
 /* ---------- The street's story: things the camera passes on its way to his parents ---------- */
 
-// a faded, peeling poster of the family act: two big capuchins, a little one, and an organ
+// where the camera stops on its way along the street: [camera x, seconds to pause there]
+const STOPS = [[650, 2.4], [940, 2.2], [1525, 3.2], [ENDCAM, 99]];     // poster, tally marks, hospital, parents
+function camPath(t) {          // where the camera should be, t seconds after the ending begins
+  let x = 70; const speed = 260;
+  for (const [sx, hold] of STOPS) {
+    const travel = Math.abs(sx - x) / speed;
+    if (t < travel) return x + (sx - x) * (t / travel);
+    t -= travel; x = sx;
+    if (t < hold) return x;
+    t -= hold;
+  }
+  return x;
+}
+
+// the family poster: big, lit by its own wall lamp so it is the first thing the eye goes to
 function drawPoster(x, y) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(-0.04);
-  ctx.fillStyle = '#d8cdaa'; ctx.fillRect(-38, -52, 76, 104);
-  ctx.fillStyle = 'rgba(110,85,50,.28)'; ctx.beginPath(); ctx.ellipse(-8, 30, 26, 14, 0.3, 0, Math.PI * 2); ctx.fill();   // water stain
-  const mk = (mx, my, s) => {                                              // one happy little capuchin
+  let g = ctx.createRadialGradient(x, y - 70, 10, x, y - 70, 230);
+  g.addColorStop(0, 'rgba(255,215,140,.38)'); g.addColorStop(1, 'rgba(255,215,140,0)');
+  ctx.fillStyle = g; ctx.fillRect(x - 240, y - 300, 480, 560);
+  ctx.save(); ctx.translate(x, y); ctx.rotate(-0.03); ctx.scale(1.9, 1.9);
+  ctx.fillStyle = '#2a2a30'; ctx.fillRect(-2, -64, 4, 12);                                    // wall lamp over the poster
+  ctx.beginPath(); ctx.moveTo(-14, -60); ctx.lineTo(14, -60); ctx.lineTo(8, -68); ctx.lineTo(-8, -68); ctx.closePath(); ctx.fill();
+  ell(0, -59, 5, 2, '#ffe9a8');
+  ctx.fillStyle = '#e6dcb8'; ctx.fillRect(-38, -52, 76, 104);                                 // paper
+  ctx.strokeStyle = '#8a7a50'; ctx.lineWidth = 1.2; ctx.strokeRect(-36, -50, 72, 100);
+  ctx.fillStyle = 'rgba(110,85,50,.25)'; ctx.beginPath(); ctx.ellipse(-8, 32, 26, 12, 0.3, 0, Math.PI * 2); ctx.fill();   // water stain
+  ctx.fillStyle = '#8a3524'; ctx.textAlign = 'center'; ctx.font = 'bold 9px Georgia, serif';  // faded title
+  ctx.fillText('THE GRINDER', 0, -40); ctx.font = 'bold 8px Georgia, serif'; ctx.fillText('FAMILY', 0, -31);
+  const mk = (mx, my, s) => {                                                                  // one happy little capuchin
     ell(mx, my + 10 * s, 7 * s, 10 * s, '#4a3626');
-    ell(mx, my - 4 * s, 6.5 * s, 6.5 * s, '#e0d3b0');
+    ell(mx, my - 4 * s, 6.5 * s, 6.5 * s, '#efe4c0');
     ctx.fillStyle = '#4a3626'; ctx.beginPath(); ctx.arc(mx, my - 6 * s, 6.5 * s, Math.PI, 0); ctx.fill();
     ell(mx - 2.5 * s, my - 3 * s, 0.9 * s, 0.9 * s, '#2a1a10'); ell(mx + 2.5 * s, my - 3 * s, 0.9 * s, 0.9 * s, '#2a1a10');
     ctx.strokeStyle = '#2a1a10'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(mx, my - 1.5 * s, 2.5 * s, 0.15, Math.PI - 0.15); ctx.stroke();
   };
-  mk(-18, -16, 1.15); mk(18, -12, 1.0); mk(0, 4, 0.7);                       // father, mother, baby
-  ctx.fillStyle = '#7a4a22'; ctx.fillRect(-15, 24, 30, 15);                  // the organ
-  ctx.fillStyle = '#b08a3a'; for (let i = 0; i < 4; i++) ctx.fillRect(-12 + i * 7, 18, 3, 7);
-  ctx.fillStyle = 'rgba(150,140,120,.35)'; ctx.fillRect(-38, -52, 76, 104);  // faded
-  ctx.fillStyle = '#2b1b24'; ctx.beginPath(); ctx.moveTo(38, 52); ctx.lineTo(18, 52); ctx.lineTo(38, 30); ctx.closePath(); ctx.fill();   // torn corner
-  ctx.fillStyle = 'rgba(200,190,150,.6)'; ctx.fillRect(-42, -56, 16, 7); ctx.fillRect(26, -56, 16, 7);   // old tape
+  mk(-18, -6, 1.15); mk(18, -2, 1.0); mk(0, 14, 0.7);                                          // father, mother, baby
+  ctx.fillStyle = '#7a4a22'; ctx.fillRect(-15, 34, 30, 15);                                    // the organ
+  ctx.fillStyle = '#b08a3a'; for (let i = 0; i < 4; i++) ctx.fillRect(-12 + i * 7, 28, 3, 7);
+  ctx.fillStyle = 'rgba(150,140,120,.16)'; ctx.fillRect(-38, -52, 76, 104);                    // a little faded
+  ctx.fillStyle = '#2b1b24'; ctx.beginPath(); ctx.moveTo(38, 52); ctx.lineTo(20, 52); ctx.lineTo(38, 34); ctx.closePath(); ctx.fill();   // torn corner
+  ctx.fillStyle = 'rgba(200,190,150,.7)'; ctx.fillRect(-42, -56, 16, 7); ctx.fillRect(26, -56, 16, 7);   // old tape
   ctx.restore();
 }
 
@@ -332,31 +376,62 @@ function drawTally(x, y) {
   ctx.fillStyle = '#eee'; ctx.fillRect(x + 200, GROUND - 6, 9, 4);           // the chalk stub
 }
 
-// the hospital front: lit windows, a shut door, and a hand-painted sign that says what it costs
+// the hospital front: lit lobby behind chained doors, a canopy, a camera, and a hand-painted sign that says what it costs
 function drawHospital() {
-  const x0 = 1700, x1 = 2150;
-  ctx.fillStyle = '#4a4a54'; ctx.fillRect(x0, 100, x1 - x0, GROUND - 100);
-  ctx.fillStyle = '#34343c'; ctx.fillRect(x0 - 6, 94, x1 - x0 + 12, 14);
-  const wins = [[1730, 140, 1], [1790, 140, 0], [1990, 140, 1], [2050, 140, 1], [1730, 215, 0], [1790, 215, 1], [1990, 215, 1], [2050, 215, 0]];
-  for (const w of wins) {
+  const x0 = 1700, x1 = 2150, blink = (tNow % 1.6) < 0.2, DT = GROUND - 100, open = win > 8 ? clamp((win - 8) / 1.5, 0, 1) : 0, py = DT + 58 + clamp(open * 4, 0, 1) * (GROUND - 14 - DT - 58);
+  ctx.fillStyle = '#50505a'; ctx.fillRect(x0, 100, x1 - x0, GROUND - 100);
+  ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 1;
+  for (let y = 124; y < GROUND; y += 24) { ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); }   // stone courses
+  ctx.fillStyle = '#34343c'; ctx.fillRect(x0 - 6, 94, x1 - x0 + 12, 14);                                       // roof edge
+  ctx.fillStyle = '#6a6a74'; ctx.fillRect(2060, 80, 50, 14); ell(2075, 87, 5, 5, '#3a3a42'); ell(2095, 87, 5, 5, '#3a3a42');   // air-con unit
+  for (const w of [[1730, 140, 1], [1785, 140, 0], [2035, 140, 1], [2090, 140, 1], [1730, 215, 0], [1785, 215, 1], [2035, 215, 1], [2090, 215, 0]]) {
+    if (w[2]) { const g = ctx.createRadialGradient(w[0] + 20, w[1] + 28, 5, w[0] + 20, w[1] + 28, 60); g.addColorStop(0, 'rgba(232,201,122,.22)'); g.addColorStop(1, 'rgba(232,201,122,0)'); ctx.fillStyle = g; ctx.fillRect(w[0] - 40, w[1] - 30, 120, 120); }
     ctx.fillStyle = w[2] ? '#e8c97a' : '#15151b'; ctx.fillRect(w[0], w[1], 40, 56);
+    if (w[2]) { ctx.fillStyle = 'rgba(90,65,30,.5)'; for (let k = 0; k < 4; k++) ctx.fillRect(w[0], w[1] + 3 + k * 5, 40, 2); }   // blinds
     ctx.strokeStyle = '#2a2a30'; ctx.lineWidth = 3; ctx.strokeRect(w[0], w[1], 40, 56);
     ctx.beginPath(); ctx.moveTo(w[0] + 20, w[1]); ctx.lineTo(w[0] + 20, w[1] + 56); ctx.moveTo(w[0], w[1] + 28); ctx.lineTo(w[0] + 40, w[1] + 28); ctx.stroke();
+    ctx.fillStyle = '#3a3a42'; ctx.fillRect(w[0] - 3, w[1] + 56, 46, 5);                                          // sill
   }
-  ctx.fillStyle = '#22222a'; ctx.fillRect(1835, 112, 180, 30);               // roof sign
+  ctx.fillStyle = '#22222a'; ctx.fillRect(1835, 110, 180, 34);                                                   // roof sign
+  ctx.fillStyle = '#3fbf6a'; ctx.fillRect(1847, 124, 16, 6); ctx.fillRect(1852, 119, 6, 16);                     // green plus
   ctx.save(); ctx.shadowColor = '#9fc3ff'; ctx.shadowBlur = 8; ctx.fillStyle = '#dfe9ff';
-  ctx.font = 'bold 20px Georgia, serif'; ctx.textAlign = 'center'; ctx.fillText('HOSPITAL', 1925, 134); ctx.restore();
-  ctx.fillStyle = '#2c2420'; ctx.fillRect(1895, GROUND - 100, 60, 100);       // the shut door
-  ctx.fillStyle = '#3a302a'; ctx.fillRect(1900, GROUND - 94, 22, 44); ctx.fillRect(1928, GROUND - 94, 22, 44);
-  ell(1946, GROUND - 48, 3, 3, '#c9a93f');
-  ctx.fillStyle = '#58545a'; ctx.fillRect(1885, GROUND - 10, 80, 10);         // the step
-  ctx.save(); ctx.translate(1925, 304); ctx.rotate(-0.03);                    // hand-painted banner
-  ctx.fillStyle = '#e6e0d0'; ctx.fillRect(-80, -28, 160, 56);
-  ctx.strokeStyle = '#6b5a3a'; ctx.lineWidth = 2; ctx.strokeRect(-80, -28, 160, 56);
+  ctx.font = 'bold 19px Georgia, serif'; ctx.textAlign = 'center'; ctx.fillText('HOSPITAL', 1945, 134); ctx.restore();
+  ctx.save(); ctx.translate(1925, 260); ctx.rotate(-0.03);                                                       // hand-painted banner
+  ctx.strokeStyle = '#6b5a3a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-70, -28); ctx.lineTo(-70, -42); ctx.moveTo(70, -28); ctx.lineTo(70, -42); ctx.stroke();
+  ctx.fillStyle = '#e6e0d0'; ctx.fillRect(-80, -28, 160, 56); ctx.strokeRect(-80, -28, 160, 56);
   ctx.textAlign = 'center'; ctx.font = 'bold 22px Georgia, serif';
-  ctx.fillStyle = '#8f1b1b'; ctx.fillText('REHAB', 0, -3);
-  ctx.fillStyle = '#1a1a1a'; ctx.fillText('$100', 0, 21);
+  ctx.fillStyle = '#8f1b1b'; ctx.fillText('REHAB', 0, -3); ctx.fillStyle = '#1a1a1a'; ctx.fillText('$750', 0, 21);
   ctx.restore();
+  for (let i = 0; i < 8; i++) {                                                                                  // striped canopy
+    const tl = 1860 + i * 16.25, bl = 1850 + i * 18.75;
+    ctx.fillStyle = i % 2 ? '#e0dccd' : '#2f5d8a'; ctx.beginPath(); ctx.moveTo(tl, 312); ctx.lineTo(tl + 16.25, 312); ctx.lineTo(bl + 18.75, 332); ctx.lineTo(bl, 332); ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(1850, 332, 150, 8);
+  ctx.fillStyle = '#2a2a30'; ctx.fillRect(1890, DT, 70, 100);                                                    // door frame
+  ctx.fillStyle = '#d9c58a'; ctx.fillRect(1896, DT + 6, 58, 94);                                                 // the lit lobby behind the glass
+  ctx.fillStyle = '#8a7a58'; ctx.fillRect(1896, GROUND - 14, 58, 14);
+  ctx.fillStyle = '#6b4a2a'; ctx.fillRect(1914, GROUND - 48, 32, 34); ctx.fillStyle = '#8a6a40'; ctx.fillRect(1912, GROUND - 50, 36, 4);   // empty reception desk
+  ctx.fillStyle = '#3a5a7a'; ctx.fillRect(1898, GROUND - 28, 10, 14); ctx.fillRect(1944, GROUND - 28, 10, 14);  // waiting chairs
+  ell(1925, DT + 22, 6, 6, '#eee'); ctx.strokeStyle = '#222'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(1925, DT + 22); ctx.lineTo(1925, DT + 18); ctx.moveTo(1925, DT + 22); ctx.lineTo(1928, DT + 23); ctx.stroke();   // wall clock
+  ell(1950, GROUND - 22, 5, 9, '#2f6b3a');                                                                        // plant
+  ctx.strokeStyle = '#1a1a1f'; ctx.lineWidth = 4; const wl = 28 * (1 - 0.8 * open); ctx.strokeRect(1896, DT + 6, wl, 94); ctx.strokeRect(1954 - wl, DT + 6, wl, 94);
+  ctx.fillStyle = '#9a9aa4'; ctx.fillRect(1896 + wl - 6, DT + 40, 3, 26); ctx.fillRect(1954 - wl + 3, DT + 40, 3, 26);              // door handles
+  if (open === 0) for (let i = 0; i < 3; i++) ell(1920.5 + i * 4.5, DT + 56 + (i % 2), 3.2, 2, '#8a8f96');                         // chain across them
+  ctx.fillStyle = '#c9a93f'; ctx.fillRect(1921, py, 8, 7); ctx.strokeStyle = '#c9a93f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(1925, py, 3.5, Math.PI, 0); ctx.stroke();   // padlock
+  ctx.fillStyle = '#58545a'; ctx.fillRect(1880, GROUND - 8, 90, 8); ctx.fillStyle = '#4a464c'; ctx.fillRect(1872, GROUND, 106, 8);   // steps
+  ctx.strokeStyle = '#8a8f96'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(1884, GROUND - 8); ctx.lineTo(1884, GROUND - 36); ctx.lineTo(1876, GROUND - 36); ctx.moveTo(1966, GROUND - 8); ctx.lineTo(1966, GROUND - 36); ctx.lineTo(1974, GROUND - 36); ctx.stroke();   // handrails
+  for (const lx of [1846, 2004]) {                                                                                // lamps either side of the entrance
+    const g = ctx.createRadialGradient(lx, 326, 3, lx, 326, 70); g.addColorStop(0, 'rgba(255,225,150,.32)'); g.addColorStop(1, 'rgba(255,225,150,0)');
+    ctx.fillStyle = g; ctx.fillRect(lx - 70, 256, 140, 140); ctx.fillStyle = '#2a2a30'; ctx.fillRect(lx - 4, 320, 8, 12); ell(lx, 326, 3, 4, '#ffe9a8');
+  }
+  ctx.fillStyle = '#2a2a30'; ctx.fillRect(1966, DT + 30, 10, 16); ell(1971, DT + 35, 1.6, 1.6, blink ? '#3f3' : '#143');   // door intercom
+  ctx.save(); ctx.fillStyle = '#e8e4d8'; ctx.fillRect(1990, 350, 44, 30); ctx.strokeStyle = '#a82828'; ctx.lineWidth = 2; ctx.strokeRect(1990, 350, 44, 30);
+  ctx.fillStyle = '#a82828'; ctx.textAlign = 'center'; ctx.font = 'bold 10px Georgia, serif'; ctx.fillText('NO', 2012, 362); ctx.font = 'bold 6.5px Georgia, serif'; ctx.fillText('LOITERING', 2012, 373); ctx.restore();
+  ctx.save(); ctx.translate(2128, 150); ctx.rotate(0.45); ctx.fillStyle = '#2a2a30'; ctx.fillRect(-12, -4, 22, 9); ell(-12, 0, 3, 4, '#111'); ctx.restore();   // security camera
+  ell(2121, 148, 1.6, 1.6, blink ? '#ff3b30' : '#400');
+  ctx.fillStyle = '#6a4a2a'; ctx.fillRect(1738, GROUND - 22, 62, 6); ctx.fillRect(1738, GROUND - 40, 62, 4); ctx.fillRect(1742, GROUND - 16, 4, 16); ctx.fillRect(1792, GROUND - 16, 4, 16);   // bench
+  ctx.strokeStyle = '#2a2a30'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(2056, GROUND - 14, 14, 0, Math.PI * 2); ctx.stroke();    // empty wheelchair
+  ctx.beginPath(); ctx.arc(2034, GROUND - 4, 4, 0, Math.PI * 2); ctx.moveTo(2046, GROUND - 30); ctx.lineTo(2066, GROUND - 30); ctx.moveTo(2046, GROUND - 52); ctx.lineTo(2046, GROUND - 30); ctx.lineTo(2038, GROUND - 52); ctx.stroke();
 }
 
 // the alley behind it: a shadowed corner, a dumpster, and the hospital's plain back wall and rear door
@@ -381,7 +456,53 @@ function drawAlley() {
   ell(2872, GROUND - 130, 5, 5, '#fff3c0');
 }
 
-function drawStreetStory() { drawPoster(1050, 250); drawTally(1240, 328); drawHospital(); drawAlley(); }
+// a healthy older capuchin sitting up in a hospital blanket, smiling; arms open as the little one arrives
+function parentOk(x, s, fur, up) {
+  const CR = '#d8cdb3', DK = '#1a1410';
+  ctx.save(); ctx.translate(x, GROUND + 44); ctx.scale(s, s);
+  ell(0, 4, 50, 8, 'rgba(0,0,0,.3)');
+  ell(0, -34, 36, 38, fur);
+  ell(0, -56, 28, 13, CR);
+  for (const sx of [-1, 1]) limb(sx * 26, -58, sx * (34 + 14 * up), -52 - 40 * up, 11, fur);
+  ctx.fillStyle = '#d6e1ee'; ctx.beginPath(); ctx.ellipse(0, -26, 38, 32, 0, 0.05, Math.PI - 0.05); ctx.fill();   // blanket
+  ctx.strokeStyle = '#8fa6c4'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-36, -22); ctx.lineTo(36, -22); ctx.moveTo(-35, -12); ctx.lineTo(35, -12); ctx.stroke();
+  ctx.save(); ctx.translate(0, -82); ctx.rotate(Math.sin(tNow * 1.5 + x) * 0.05);                                // head
+  ell(-27, 2, 6, 8, '#3a281c'); ell(27, 2, 6, 8, '#3a281c');
+  ell(0, 0, 27, 25, CR);
+  ctx.fillStyle = DK; ctx.beginPath(); ctx.arc(0, -1, 26, Math.PI * 1.03, Math.PI * 1.97); ctx.lineTo(7, -8); ctx.lineTo(0, 1); ctx.lineTo(-7, -8); ctx.closePath(); ctx.fill();
+  ell(0, 9, 17, 16, '#dcae98');                                                                                  // healthy pink face
+  ell(-10, 14, 4, 2.5, 'rgba(230,120,120,.4)'); ell(10, 14, 4, 2.5, 'rgba(230,120,120,.4)');
+  for (const sx of [-1, 1]) { ell(sx * 8, 4, 5.5, 4.5, '#fffdf5'); ell(sx * 8, 4.5, 2.6, 2.6, '#150a05'); ell(sx * 8 - 0.8, 3.5, 0.9, 0.9, '#fff'); }
+  ell(-2, 15, 1.3, 1, DK); ell(2, 15, 1.3, 1, DK);
+  ctx.strokeStyle = DK; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(-9, 21); ctx.quadraticCurveTo(0, 30, 9, 21); ctx.stroke();   // big smile
+  ctx.restore();
+  ctx.restore();
+}
+
+// the good ending's alley: the back door open with warm light, and his parents safe
+function drawParentsHappy() {
+  ctx.fillStyle = '#ffe9a8'; ctx.fillRect(2846, GROUND - 100, 52, 94);
+  const g = ctx.createLinearGradient(2846, 0, 2400, 0); g.addColorStop(0, 'rgba(255,225,150,.4)'); g.addColorStop(1, 'rgba(255,225,150,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(2846, GROUND - 100); ctx.lineTo(2400, GROUND - 40); ctx.lineTo(2400, GROUND + 90); ctx.lineTo(2846, GROUND - 6); ctx.closePath(); ctx.fill();
+  const up = clamp((monkeyX - 2150) / 200, 0, 1);
+  parentOk(PX, 1, '#6a6560', up); parentOk(PX + 150, 0.88, '#74685c', up);
+}
+
+// the hospital in the good ending: warm light pouring out of the open doors, and the sign stamped PAID
+function drawHospitalHappy() {
+  if (win < 8) return;
+  const open = clamp((win - 8) / 1.5, 0, 1), stamp = win > 9.5 ? clamp((win - 9.5) / 0.4, 0, 1) : 0;
+  const g = ctx.createRadialGradient(1925, GROUND - 40, 10, 1925, GROUND - 40, 210);
+  g.addColorStop(0, 'rgba(255,225,150,' + 0.55 * open + ')'); g.addColorStop(1, 'rgba(255,225,150,0)');
+  ctx.fillStyle = g; ctx.fillRect(1700, 250, 450, 270);
+  if (stamp > 0) {
+    ctx.save(); ctx.translate(1925, 260); ctx.rotate(-0.28); const sc = 1 + (1 - stamp) * 1.4; ctx.scale(sc, sc); ctx.globalAlpha = stamp;
+    ctx.strokeStyle = '#2f9e57'; ctx.lineWidth = 4; ctx.strokeRect(-48, -20, 96, 40);
+    ctx.fillStyle = '#2f9e57'; ctx.font = 'bold 30px Georgia, serif'; ctx.textAlign = 'center'; ctx.fillText('PAID', 0, 11); ctx.restore();
+  }
+}
+
+function drawStreetStory() { drawPoster(1050, 235); drawTally(1240, 328); drawHospital(); drawHospitalHappy(); drawAlley(); }
 
 function drawOrgan(L) {
   const x = 110, y = GROUND - 100;
@@ -396,7 +517,7 @@ function drawOrgan(L) {
   limb(px, py, hx, hy, 5, '#d9a93f'); ell(hx, hy, 5, 5, '#f2c94c');
   // chain from the box to the monkey
   ctx.strokeStyle = '#8a8f96'; ctx.lineWidth = 2.5; ctx.setLineDash([5, 3]);
-  ctx.beginPath(); ctx.moveTo(x + 150, y + 90); ctx.quadraticCurveTo(300, GROUND + 25, MX + 12, GROUND - 52); ctx.stroke();
+  if (win < 3) { ctx.beginPath(); ctx.moveTo(x + 150, y + 90); ctx.quadraticCurveTo(300, GROUND + 25, MX + 12, GROUND - 52); ctx.stroke(); }
   ctx.setLineDash([]);
 }
 
@@ -405,7 +526,7 @@ function drawMonkey(L) {
   const BR = '#5b3a22', DK = '#2d1b10', CR = '#e6cfa8';
   const bounce = Math.abs(s) * d * 16;
   ctx.save();
-  ctx.translate(MX, GROUND - bounce);
+  ctx.translate(monkeyX, GROUND - bounce);
   ctx.rotate(s * d * 0.07 + Math.sin(tNow * 28) * 0.012 * c);
 
   // tail
@@ -436,6 +557,7 @@ function drawMonkey(L) {
   ctx.save(); ctx.translate(rhx + 4, rhy - 4);
   ctx.fillStyle = '#9aa3ab'; ctx.beginPath(); ctx.moveTo(-14, -14); ctx.lineTo(14, -14); ctx.lineTo(10, 12); ctx.lineTo(-10, 12); ctx.closePath(); ctx.fill();
   ctx.fillStyle = '#cfd6dc'; ctx.fillRect(-16, -17, 32, 5);
+  if (win > 0) { ell(-6, -16, 6, 3, '#f2c94c'); ell(5, -17, 6, 3, '#f2c94c'); ell(0, -20, 6, 3, '#ffd966'); }   // coins heaped in the cup
   ctx.restore();
   ell(rhx - 5, rhy + 2, 7, 7, DK);
   const cp = ctx.getTransform().transformPoint(new DOMPoint(rhx + 4, rhy - 14));
@@ -581,6 +703,7 @@ function elder(cx, cy, dir, fur, sc, extra) {
 
 // the monkey's parents, on the cobblestones in the second screen of the world
 function drawParents() {
+  if (win > 0) { drawParentsHappy(); return; }
   elder(PX, GROUND + 44, 1, '#5e5b57', 1, true);                      // father
   elder(PX + 215, GROUND + 66, -1, '#6a5f55', 0.85, false);                 // mother
   ctx.save(); ctx.translate(PX + 108, GROUND + 80); ctx.rotate(1.35);       // a tin cup knocked over
@@ -610,6 +733,11 @@ function drawOver() {
 }
 
 function drawEffects() {
+  for (const p of sparks) { ctx.fillStyle = 'rgba(255,215,90,' + clamp(p.life * 1.4, 0, 1) + ')'; ctx.beginPath(); ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2); ctx.fill(); }
+  for (const h of hearts) {
+    ctx.save(); ctx.translate(h.x, h.y); ctx.globalAlpha = clamp(h.life, 0, 1); ctx.fillStyle = '#e0536a';
+    ctx.beginPath(); ctx.moveTo(0, 5); ctx.bezierCurveTo(-14, -4, -8, -16, 0, -8); ctx.bezierCurveTo(8, -16, 14, -4, 0, 5); ctx.fill(); ctx.restore();
+  }
   for (const t of tears) { ctx.fillStyle = 'rgba(170,215,255,' + clamp(t.life, 0, 0.85) + ')'; ctx.beginPath(); ctx.ellipse(t.x, t.y, 2.2, 3.6, 0, 0, Math.PI * 2); ctx.fill(); }
   for (const f of flying) {
     const x = f.x0 + (cupX - f.x0) * f.u, y = f.y0 + (cupY - f.y0) * f.u - Math.sin(Math.PI * f.u) * 70;
@@ -629,6 +757,10 @@ function drawHUD(L) {
   ctx.fillText("Monkey's patience", 26, 36);
   ctx.fillStyle = '#000'; ctx.fillRect(26, 44, 242, 12);
   ctx.fillStyle = 'hsl(' + Math.round(mood * 1.2) + ',70%,50%)'; ctx.fillRect(27, 45, 240 * mood / 100, 10);
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(16, 70, 262, 44);
+  ctx.fillStyle = '#e8d9b0'; ctx.font = 'bold 14px Georgia, serif'; ctx.fillText('Rehab fund: ' + coins + ' / ' + GOAL, 26, 90);
+  ctx.fillStyle = '#000'; ctx.fillRect(26, 98, 242, 10);
+  ctx.fillStyle = '#f2c94c'; ctx.fillRect(27, 99, 240 * Math.min(1, coins / GOAL), 8);
 
   ctx.textAlign = 'right'; ctx.font = '15px Georgia, serif'; ctx.fillStyle = '#e8d9b0';
   ctx.fillText('Coins tipped: ' + coins, W - 18, 32);
@@ -678,8 +810,9 @@ function draw() {
   const v = ctx.createRadialGradient(W / 2, H / 2, 150, W / 2, H / 2, 520);
   v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,' + (0.3 + 0.5 * L.g) + ')');
   ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
-  if (pan > 13) { ctx.fillStyle = 'rgba(0,0,0,' + clamp((pan - 13) / 2, 0, 1) + ')'; ctx.fillRect(0, 0, W, H); }
-  if (state === 'title') drawTitle(); else if (over) drawOver(); else if (pan < 1.5) { ctx.globalAlpha = clamp(1 - pan / 1.5, 0, 1); drawHUD(L); ctx.globalAlpha = 1; }
+  if (pan > 21) { ctx.fillStyle = 'rgba(0,0,0,' + clamp((pan - 21) / 2, 0, 1) + ')'; ctx.fillRect(0, 0, W, H); }
+  if (state === 'title') drawTitle(); else if (over) drawOver(); else if (win === 0 && pan < 1.5) { ctx.globalAlpha = clamp(1 - pan / 1.5, 0, 1); drawHUD(L); ctx.globalAlpha = 1; }
+  if (win > 17) { ctx.globalAlpha = 0.4 + 0.4 * Math.sin(tNow * 3); ctx.fillStyle = '#e8d9b0'; ctx.font = '16px Georgia, serif'; ctx.textAlign = 'right'; ctx.fillText('Click to play again', W - 18, H - 16); ctx.globalAlpha = 1; }
 }
 
 let last = 0;
