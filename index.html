@@ -28,7 +28,7 @@ let mood = 80, elapsed = 0, ph = 0, tNow = 0;
 let coins = 0, danceTime = 0, weepTime = 0, drain = 5;
 let flying = [], tears = [], notes = [];
 let cupX = 500, cupY = 330, cupShake = 0, crank = 0;
-let man = null, cut = 0, over = false, overTime = 0, lowTime = 0, sawTimer = 0, blood = [];   // the man with the chainsaw
+let man = null, cut = 0, over = false, overTime = 0, lowTime = 0, sawTimer = 0, blood = [], chunks = [], lens = [];   // the man with the chainsaw
 
 // How much dancing / glaring / crying, each from 0 to 1, based on mood
 function levels() {
@@ -54,13 +54,13 @@ function tone(f, dur, type, vol, f2) {
 /* ---------- Input ---------- */
 function restart() {
   state = 'play'; mood = 80; elapsed = 0; coins = 0; danceTime = 0; weepTime = 0;
-  man = null; cut = 0; over = false; overTime = 0; lowTime = 0; blood = []; flying = []; tears = [];
+  man = null; cut = 0; over = false; overTime = 0; lowTime = 0; blood = []; chunks = []; lens = []; flying = []; tears = [];
 }
 function toss(x, y) {
   if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
   if (ac && ac.state === 'suspended') ac.resume();
   if (state === 'title') { restart(); return; }
-  if (over) { if (overTime > 2.5) restart(); return; }
+  if (over) { if (overTime > 2) restart(); return; }
   if (cut > 0) return;                                  // too late to tip him
   flying.push({ x0: x, y0: y, u: 0 });
 }
@@ -80,6 +80,8 @@ function update(dt) {
   tears = tears.filter(t => t.life > 0);
   notes.forEach(n => { n.y -= 30 * dt; n.x += Math.sin(n.y * 0.05) * 0.4; n.life -= dt; });
   notes = notes.filter(n => n.life > 0);
+  chunks.forEach(c => { if (!c.landed) { c.vy += 700 * dt; c.x += c.vx * dt; c.y += c.vy * dt; c.rot += c.vr * dt; if (c.y > c.gy) { c.y = c.gy; c.landed = true; } } });
+  lens.forEach(l => { l.len += dt * (8 + l.r); });                                   // splats on the screen slowly run down
   blood.forEach(b => { if (!b.landed) { b.vy += 700 * dt; b.x += b.vx * dt; b.y += b.vy * dt; if (b.y > b.gy) { b.y = b.gy; b.landed = true; } } });
 
   if (state === 'play' && cut === 0 && !over) {
@@ -98,30 +100,37 @@ function update(dt) {
   // He shows up if patience stays near zero, walks slowly toward the monkey,
   // and leaves again if you tip enough. If he gets there, he does it.
   lowTime = mood < 8 ? lowTime + dt : 0;
-  if (!man && lowTime > 1.5) man = { x: W + 70, moving: true, wait: 0 };
+  if (!man && lowTime > 1.5) man = { x: W + 70, moving: true, wait: 0, ang: -1 };
   if (man && cut === 0) {
-    if (mood > 22) { man.x += 140 * dt; man.moving = true; man.wait = 0; if (man.x > W + 90) man = null; }
+    if (mood > 22) { man.x += 100 * dt; man.moving = true; man.wait = 0; if (man.x > W + 90) man = null; }
     else if (mood < 12) {
-      if (man.x > MX + 190) { man.x = Math.max(MX + 190, man.x - 45 * dt); man.moving = true; }
+      if (man.x > MX + 190) { man.x = Math.max(MX + 190, man.x - 85 * dt); man.moving = true; }
       else { man.moving = false; man.wait += dt; if (man.wait > 2.2) cut = 0.001; }
     } else man.moving = false;
   }
   if (cut > 0) {
-    cut += dt; mood = 0;
+    cut += dt; mood = 0; man.moving = false;
     man.x = cut < 1.2 ? MX + 190 - 58 * (cut / 1.2) : MX + 132 + Math.sin(cut * 40) * 1.5;
-    if (cut > 1 && cut < 3.6) {
-      for (let i = 0, n = Math.round(dt * 180); i < n; i++)
+    if (cut > 1 && cut < 3.8) {
+      if (Math.random() < dt * 14) chunks.push({ x: MX + (Math.random() - .5) * 30, y: GROUND - 95 + (Math.random() - .5) * 30,
+        vx: -200 + Math.random() * 320, vy: -150 - Math.random() * 260, gy: GROUND + 6 + Math.random() * 50,
+        rot: 0, vr: (Math.random() - .5) * 14, kind: Math.random() < 0.35 ? 1 : 0, r: 4 + Math.random() * 7 });
+      if (Math.random() < dt * 4) lens.push({ x: 40 + Math.random() * 720, y: 40 + Math.random() * 380, r: 8 + Math.random() * 26, len: 0 });
+      for (let i = 0, n = Math.round(dt * 260); i < n; i++)
         blood.push({ x: MX + (Math.random() - .5) * 30, y: GROUND - 90 + (Math.random() - .5) * 30,
                      vx: -240 + Math.random() * 330, vy: -80 - Math.random() * 300,
                      gy: GROUND + 4 + Math.random() * 50, r: 2 + Math.random() * 3.5 });
     }
-    if (cut > 4.4) { over = true; overTime = 0; }
+    if (cut > 5.2) { over = true; overTime = 0; }
   }
   if (man) {
+    man.ang += ((man.moving ? -1 : 0) - man.ang) * Math.min(1, dt * 6);            // saw hangs low while he strolls, rises when he stops
+    man.st = (man.st || 0) - dt;
+    if (man.moving && man.st <= 0) { man.st = 0.34; tone(65, 0.07, 'sine', 0.06, 40); }   // footsteps
     sawTimer -= dt;
     if (sawTimer <= 0) {
       sawTimer = 0.07;
-      const rev = cut > 0 ? 1 : man.moving ? 0.4 : 0.8;
+      const rev = cut > 0 ? 1 : man.moving ? 0.25 : 0.8;
       tone(80 + rev * 70 + Math.random() * 25, 0.1, 'sawtooth', 0.02 + 0.04 * rev);
       if (cut > 1.2 && Math.random() < 0.5) tone(40 + Math.random() * 30, 0.12, 'square', 0.06);
     }
@@ -321,66 +330,111 @@ function drawMonkey(L) {
   ctx.restore();  // body
 }
 
-// a crude jagged red opening in the chest, growing from 0 to 1
+// the opened chest: ribs, lungs, a beating heart, and intestines hanging out. k grows from 0 to 1
 function drawWound(k) {
-  const pts = [[0,-118],[.6,-108],[.3,-98],[1,-88],[.4,-76],[.8,-66],[0,-58],[-.7,-68],[-.3,-78],[-1,-90],[-.4,-100],[-.7,-110]];
+  const pts = [[0,-120],[.6,-110],[.3,-98],[1,-88],[.4,-76],[.8,-64],[0,-56],[-.7,-66],[-.3,-78],[-1,-90],[-.4,-100],[-.7,-112]];
+  const alive = cut < 3.4;
+  const breath = 1 + (alive ? 0.08 * Math.sin(tNow * 8) : 0), beat = 1 + (alive ? 0.18 * Math.max(0, Math.sin(tNow * 10)) : 0);
   const path = sc => {
     ctx.beginPath();
     pts.forEach((p, i) => {
-      const x = p[0] * 22 * k * sc + Math.sin(tNow * 30 + i) * 1.5 * k, y = p[1];
+      const x = p[0] * 26 * k * sc + Math.sin(tNow * 30 + i) * 1.2 * k, y = p[1];
       if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
     });
     ctx.closePath();
   };
+  ell(0, -80, 37, 36, 'rgba(90,5,14,' + 0.5 * k + ')');                 // blood-soaked vest
   path(1); ctx.fillStyle = '#4d050d'; ctx.fill();
-  path(0.62); ctx.fillStyle = '#a3162a'; ctx.fill();
-  ctx.fillStyle = '#3a0409';
-  ctx.beginPath(); ctx.ellipse(-3 * k, -92, 6 * k, 9 * k, 0.3, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(5 * k, -80, 5 * k, 7 * k, -0.2, 0, Math.PI * 2); ctx.fill();
+  path(0.8); ctx.fillStyle = '#2a0409'; ctx.fill();
+  ctx.strokeStyle = '#e2d6bd'; ctx.lineWidth = 3; ctx.lineCap = 'round';      // ribs
+  for (let j = 0; j < 4; j++) { const y = -108 + j * 12; ctx.beginPath(); ctx.moveTo(-17 * k, y); ctx.quadraticCurveTo(0, y + 7, 17 * k, y); ctx.stroke(); }
+  ell(-9 * k, -98, 8 * k * breath, 15 * k * breath, '#d98a95'); ell(9 * k, -98, 8 * k * breath, 15 * k * breath, '#d98a95');   // lungs
+  ell(-9 * k, -96, 4 * k, 9 * k, '#c06c7a'); ell(9 * k, -96, 4 * k, 9 * k, '#c06c7a');
+  ell(0, -90, 7 * k * beat, 8 * k * beat, '#a3162a'); ell(-2 * k, -92, 2 * k, 3 * k, 'rgba(255,170,170,.6)');                // heart
+  ell(-6 * k, -74, 9 * k, 6 * k, '#7a1c26'); ell(8 * k, -72, 7 * k, 5 * k, '#c0394a');                                      // liver, stomach
+  const sway = Math.sin(tNow * 3) * 3 * k;                                                                                   // intestines
+  for (const o of [-6, 5]) {
+    ctx.beginPath(); ctx.moveTo(o * k, -68);
+    ctx.bezierCurveTo((o - 30) * k + sway, -52, (o + 24) * k + sway, -38, (o - 18) * k + sway, -68 + 54 * k);
+    ctx.strokeStyle = '#8a3a45'; ctx.lineWidth = 12 * k + 1; ctx.stroke();
+    ctx.strokeStyle = '#d99a9c'; ctx.lineWidth = 8 * k + 1; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,225,225,.6)'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  ctx.strokeStyle = '#5a0610'; ctx.lineWidth = 3;                                                                            // drips
+  for (const i of [-1, -.5, .3, .9]) { ctx.beginPath(); ctx.moveTo(i * 20 * k, -64); ctx.lineTo(i * 20 * k + i * 2, -64 + (40 + (i + 1) * 8) * k); ctx.stroke(); }
 }
 
-// the man: a flat black shape with a blank pale face, holding a chainsaw
+// the man: a flat black shape with a blank pale face, strolling along with a chainsaw
 function drawMan() {
   if (!man) return;
   const x = man.x, sawing = cut > 0, BLK = '#0c0a0f', SK = '#cfc7b8';
-  const bob = man.moving ? Math.abs(Math.sin(tNow * 6)) * 4 : 0, sw = man.moving ? Math.sin(tNow * 6) * 14 : 0;
-  const by = GROUND - bob, sy = by - 88;
+  const bob = man.moving ? Math.abs(Math.sin(tNow * 5.5)) * 2.5 : 0, sw = man.moving ? Math.sin(tNow * 5.5) * 18 : 0;
+  const by = GROUND - bob, sy = by - 88, ang = man.ang, running = sawing || !man.moving;
+  const px = x - 10, ca = Math.cos(ang), sa = Math.sin(ang);
+  const rot = (a, b) => [px + a * ca - b * sa, sy + a * sa + b * ca];     // saw-space point -> screen point
+  const gore = sawing ? clamp((cut - 1.2) / 1.5, 0, 1) : 0;
+  const f = rot(-35, -27), r = rot(-3, -8);                               // where his hands grip the saw
   ctx.save(); ctx.translate(sawing ? (Math.random() - .5) * 3 : 0, 0);
   limb(x - 10, by - 100, x - 10 + sw, by - 6, 17, BLK); limb(x + 12, by - 100, x + 12 - sw, by - 6, 17, BLK);
   ctx.fillStyle = BLK; ctx.beginPath(); ctx.moveTo(x - 30, by - 218); ctx.lineTo(x + 28, by - 218); ctx.lineTo(x + 38, by - 85); ctx.lineTo(x - 38, by - 85); ctx.closePath(); ctx.fill();
-  ell(x - 4, by - 244, 23, 23, BLK);                    // hood
-  ell(x - 10, by - 242, 14, 18, SK);                    // blank face
-  limb(x - 22, by - 205, x - 52, by - 96, 15, BLK); limb(x + 18, by - 205, x - 6, by - 100, 15, BLK);
-  // chainsaw: grey bar with a moving chain, orange body
-  ctx.fillStyle = '#9aa0a6'; ctx.fillRect(x - 120, sy - 6, 62, 12);
-  ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
-  ctx.lineDashOffset = -tNow * 160 * (sawing || !man.moving ? 1 : 0.3);
-  ctx.beginPath(); ctx.moveTo(x - 120, sy - 6); ctx.lineTo(x - 58, sy - 6); ctx.moveTo(x - 120, sy + 6); ctx.lineTo(x - 58, sy + 6); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = '#e8731a'; ctx.fillRect(x - 62, sy - 16, 50, 30);
-  ctx.fillStyle = '#222'; ctx.fillRect(x - 14, sy - 12, 16, 22);
-  ell(x - 52, sy + 4, 8, 8, BLK); ell(x - 8, sy + 8, 8, 8, BLK);
+  for (let i = 0; i < 16; i++) if (i / 16 < gore) ell(x - 34 + (i * 37) % 68, by - 210 + (i * 53) % 110, 2 + (i % 3) * 1.5, 2 + (i % 3) * 1.5, '#8f0f1c');   // blood on the coat
+  ell(x - 4, by - 244, 23, 23, BLK);
+  ell(x - 10, by - 242, 14, 18, SK);
+  for (let i = 0; i < 5; i++) if (i / 5 < gore) ell(x - 17 + (i * 7) % 14, by - 252 + (i * 11) % 22, 2, 2.5, '#8f0f1c');                                 // blood on the face
+  limb(x - 22, by - 205, f[0], f[1], 15, BLK); limb(x + 18, by - 205, r[0], r[1], 15, BLK);
+
+  // chainsaw (drawn pointing left from the rear handle, then tilted by ang)
+  ctx.save();
+  ctx.translate(px + (running ? (Math.random() - .5) * 1.4 : 0), sy + (running ? (Math.random() - .5) * 1.4 : 0)); ctx.rotate(ang);
+  ctx.fillStyle = '#b9bfc5'; ctx.strokeStyle = '#444a50'; ctx.lineWidth = 1.5;                              // guide bar
+  ctx.beginPath(); ctx.moveTo(-58, -7); ctx.lineTo(-125, -7); ctx.arc(-125, 0, 7, Math.PI * 1.5, Math.PI * 0.5, true); ctx.lineTo(-58, 7); ctx.closePath(); ctx.fill(); ctx.stroke();
+  if (gore > 0) { ctx.fillStyle = 'rgba(143,15,28,' + 0.6 * gore + ')'; ctx.fillRect(-132, -7, 74 * gore, 14); }
+  const off = (tNow * (running ? 220 : 40)) % 67;                                                           // chain teeth going round
+  ctx.fillStyle = '#2b2b2b';
+  for (let i = 0; i < 9; i++) {
+    const u = (i * 8 + off) % 67;
+    ctx.beginPath(); ctx.moveTo(-58 - u, -7); ctx.lineTo(-61 - u, -12); ctx.lineTo(-64 - u, -7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-125 + u, 7); ctx.lineTo(-122 + u, 12); ctx.lineTo(-119 + u, 7); ctx.fill();
+  }
+  if (gore > 0.3) for (let i = 0; i < 4; i++) ell(-62 - ((i * 17 + off) % 60), -9, 3, 2.2, '#d99a9c');      // bits caught in the chain
+  ell(-125, 0, 4, 4, '#555b61');
+  ctx.fillStyle = '#e8731a'; ctx.strokeStyle = '#7a3508'; ctx.lineWidth = 2;                                // orange body
+  ctx.beginPath(); ctx.moveTo(-62, -14); ctx.lineTo(-52, -22); ctx.lineTo(-14, -22); ctx.lineTo(-6, -10); ctx.lineTo(-6, 12); ctx.lineTo(-62, 14); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#7a3508'; for (let i = 0; i < 4; i++) ctx.fillRect(-24, -16 + i * 5, 12, 2);             // air vents
+  ell(-30, 0, 9, 9, '#444'); ell(-30, 0, 4, 4, '#999'); ell(-40, -22, 5, 2.5, '#d8d8d8');                   // starter, fuel cap
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 5; ctx.lineCap = 'round';                                    // handles
+  ctx.beginPath(); ctx.moveTo(-52, -22); ctx.bezierCurveTo(-50, -36, -24, -36, -20, -22); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-8, 4); ctx.lineTo(10, 4); ctx.lineTo(10, -14); ctx.lineTo(-6, -20); ctx.stroke();
+  ctx.fillStyle = '#222'; ctx.fillRect(-66, -26, 5, 14);                                                    // hand guard
+  if (gore > 0) for (const q of [[-50, -6], [-36, 8], [-22, -10], [-44, -16]]) ell(q[0], q[1], 4 * gore, 3 * gore, '#8f0f1c');
+  ctx.restore();
+
+  ell(f[0], f[1], 8, 8, BLK); ell(r[0], r[1], 8, 8, BLK);
   ctx.restore();
 }
 
 function drawOver() {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#b3182c'; ctx.font = 'italic 34px Georgia, serif';
-  ctx.fillText("He didn't even try to run.", W / 2, 230);
-  if (overTime > 1.2) {
-    ctx.globalAlpha = clamp((overTime - 1.2) / 1, 0, 1); ctx.fillStyle = '#8a8070'; ctx.font = '17px Georgia, serif';
-    ctx.fillText('Coins tipped: ' + coins + '   Danced for ' + danceTime.toFixed(0) + 's   Wept for ' + weepTime.toFixed(0) + 's', W / 2, 280);
+  if (overTime > 0.8) {
+    ctx.globalAlpha = clamp((overTime - 0.8) / 1, 0, 1); ctx.fillStyle = '#8a8070'; ctx.font = '17px Georgia, serif';
+    ctx.fillText('Coins tipped: ' + coins + '   Danced for ' + danceTime.toFixed(0) + 's   Wept for ' + weepTime.toFixed(0) + 's', W / 2, 250);
     ctx.globalAlpha = 1;
   }
-  if (overTime > 2.5) {
+  if (overTime > 2) {
     ctx.globalAlpha = 0.5 + 0.5 * Math.sin(tNow * 3); ctx.fillStyle = '#e8d9b0'; ctx.font = 'bold 20px Georgia, serif';
-    ctx.fillText('Click to try again', W / 2, 350); ctx.globalAlpha = 1;
+    ctx.fillText('Click to try again', W / 2, 320); ctx.globalAlpha = 1;
   }
 }
 
 function drawEffects() {
   for (const b of blood) { ctx.fillStyle = '#8f0f1c'; ctx.beginPath(); ctx.ellipse(b.x, b.y, b.r, b.landed ? b.r * 0.5 : b.r, 0, 0, Math.PI * 2); ctx.fill(); }
+  for (const c of chunks) {                                                            // flying lumps and bits of intestine
+    ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.rot);
+    if (c.kind) { ctx.strokeStyle = '#d99a9c'; ctx.lineWidth = c.r * 0.9; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(-c.r * 1.6, 0); ctx.bezierCurveTo(-c.r, -c.r, c.r, c.r, c.r * 1.6, 0); ctx.stroke(); }
+    else { ell(0, 0, c.r, c.r * 0.7, c.r > 7 ? '#6e0a14' : '#c0394a'); ell(-c.r * 0.25, -c.r * 0.2, c.r * 0.3, c.r * 0.2, 'rgba(255,200,200,.5)'); }
+    ctx.restore();
+  }
   for (const t of tears) { ctx.fillStyle = 'rgba(170,215,255,' + clamp(t.life, 0, 0.85) + ')'; ctx.beginPath(); ctx.ellipse(t.x, t.y, 2.2, 3.6, 0, 0, Math.PI * 2); ctx.fill(); }
   for (const f of flying) {
     const x = f.x0 + (cupX - f.x0) * f.u, y = f.y0 + (cupY - f.y0) * f.u - Math.sin(Math.PI * f.u) * 70;
@@ -438,14 +492,19 @@ function draw() {
   const sh = cut > 1 ? 5 : 0;
   ctx.save(); ctx.translate((Math.random() - .5) * sh, (Math.random() - .5) * sh);
   drawBG(L); drawOrgan(L);
-  if (cut > 1) { const k = clamp((cut - 1) / 1.6, 0, 1); ell(MX, GROUND + 24, 20 + k * 90, 4 + k * 16, '#4d050d'); }
+  if (cut > 1) { const k = clamp((cut - 1) / 1.6, 0, 1); ell(MX, GROUND + 24, 20 + k * 130, 4 + k * 24, '#4d050d'); }
   drawMonkey(L); drawMan(); drawEffects();
   ctx.restore();
   // the room gets darker as he gets angrier
   const v = ctx.createRadialGradient(W / 2, H / 2, 150, W / 2, H / 2, 520);
   v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,' + (0.3 + 0.5 * L.g) + ')');
   ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
-  if (cut > 3.3) { ctx.fillStyle = 'rgba(0,0,0,' + clamp((cut - 3.3) / 0.9, 0, 1) + ')'; ctx.fillRect(0, 0, W, H); }
+  for (const l of lens) {                                                              // blood on the camera
+    ctx.fillStyle = 'rgba(120,6,16,.85)'; ctx.strokeStyle = 'rgba(120,6,16,.8)'; ctx.lineWidth = l.r * 0.35; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(l.x, l.y, l.r, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.lineTo(l.x, l.y + l.len); ctx.stroke();
+  }
+  if (cut > 4) { ctx.fillStyle = 'rgba(0,0,0,' + clamp((cut - 4) / 1, 0, 1) + ')'; ctx.fillRect(0, 0, W, H); }
   if (state === 'title') drawTitle(); else if (over) drawOver(); else if (cut === 0) drawHUD(L);
 }
 
