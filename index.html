@@ -20,7 +20,7 @@
    - The monkey's look is worked out from mood: dancing -> slowing -> glaring -> crying. */
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-const W = 800, H = 520, GROUND = 440, MX = 420, WORLD = 3000, ENDCAM = 2150, PX = 2480, GOAL = 750;   // PX = where his father lies, GOAL = coins needed to pay for rehab          // MX = monkey's x position
+const W = 800, H = 520, GROUND = 440, MX = 420, WORLD = 3000, ENDCAM = 2150, PX = 2480, GOAL = 450;   // PX = where his father lies, GOAL = coins needed to pay for rehab          // MX = monkey's x position
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 let state = 'title';                 // 'title' or 'play'
@@ -346,16 +346,30 @@ function drawPoster(x, y) {
   ctx.fillStyle = 'rgba(110,85,50,.25)'; ctx.beginPath(); ctx.ellipse(-8, 32, 26, 12, 0.3, 0, Math.PI * 2); ctx.fill();   // water stain
   ctx.fillStyle = '#8a3524'; ctx.textAlign = 'center'; ctx.font = 'bold 9px Georgia, serif';  // faded title
   ctx.fillText('THE GRINDER', 0, -40); ctx.font = 'bold 8px Georgia, serif'; ctx.fillText('FAMILY', 0, -31);
-  const mk = (mx, my, s) => {                                                                  // one happy little capuchin
-    ell(mx, my + 10 * s, 7 * s, 10 * s, '#4a3626');
-    ell(mx, my - 4 * s, 6.5 * s, 6.5 * s, '#efe4c0');
-    ctx.fillStyle = '#4a3626'; ctx.beginPath(); ctx.arc(mx, my - 6 * s, 6.5 * s, Math.PI, 0); ctx.fill();
-    ell(mx - 2.5 * s, my - 3 * s, 0.9 * s, 0.9 * s, '#2a1a10'); ell(mx + 2.5 * s, my - 3 * s, 0.9 * s, 0.9 * s, '#2a1a10');
-    ctx.strokeStyle = '#2a1a10'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(mx, my - 1.5 * s, 2.5 * s, 0.15, Math.PI - 0.15); ctx.stroke();
+  const BR = '#5b3a22', DK = '#2d1b10', CR = '#e6cfa8';
+  const mk = (mx, my, s, bow) => {                                         // one capuchin, dressed exactly like the one you tip
+    ell(mx, my + 12 * s, 8 * s, 11 * s, BR);                                 // body
+    ell(mx, my + 10 * s, 8.5 * s, 9 * s, '#a3162a');                         // red vest
+    ctx.fillStyle = CR; ctx.beginPath(); ctx.moveTo(mx - 3 * s, my + 3 * s); ctx.lineTo(mx + 3 * s, my + 3 * s); ctx.lineTo(mx, my + 14 * s); ctx.fill();   // cream bib
+    ell(mx - 7 * s, my - 4 * s, 2.6 * s, 3 * s, CR); ell(mx + 7 * s, my - 4 * s, 2.6 * s, 3 * s, CR);                                                  // ears
+    ell(mx, my - 4 * s, 7 * s, 7 * s, BR);                                   // head
+    ctx.fillStyle = DK; ctx.beginPath(); ctx.arc(mx, my - 5 * s, 7 * s, Math.PI * 1.02, -0.02); ctx.fill();                                            // dark cap
+    ell(mx, my - 2.5 * s, 5.5 * s, 5.5 * s, CR);                             // cream face
+    ell(mx - 2.2 * s, my - 3.4 * s, 1.1 * s, 1.1 * s, '#150a05'); ell(mx + 2.2 * s, my - 3.4 * s, 1.1 * s, 1.1 * s, '#150a05');
+    ctx.strokeStyle = '#150a05'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.arc(mx, my - 1.3 * s, 2.6 * s, 0.2, Math.PI - 0.2); ctx.stroke();           // smile
+    ctx.fillStyle = '#b3182c'; ctx.beginPath(); ctx.moveTo(mx - 4 * s, my - 9.5 * s); ctx.lineTo(mx - 3 * s, my - 14.5 * s); ctx.lineTo(mx + 3 * s, my - 14.5 * s); ctx.lineTo(mx + 4 * s, my - 9.5 * s); ctx.closePath(); ctx.fill();   // fez
+    ctx.strokeStyle = '#e8c14a'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(mx, my - 14.5 * s); ctx.lineTo(mx + 4.5 * s, my - 11.5 * s); ctx.stroke();  // tassel
+    if (bow) { ell(mx - 5 * s, my - 8 * s, 2.4 * s, 1.6 * s, '#e0709a'); ell(mx - 8.5 * s, my - 8 * s, 2.4 * s, 1.6 * s, '#e0709a'); }                  // mother's bow
   };
-  mk(-18, -6, 1.15); mk(18, -2, 1.0); mk(0, 14, 0.7);                                          // father, mother, baby
-  ctx.fillStyle = '#7a4a22'; ctx.fillRect(-15, 34, 30, 15);                                    // the organ
-  ctx.fillStyle = '#b08a3a'; for (let i = 0; i < 4; i++) ctx.fillRect(-12 + i * 7, 28, 3, 7);
+  limb(-14, 14, -18, 38, 3.2, BR); limb(23, 10, 32, -3, 3.2, BR);          // father's arm down to the crank, mother's arm up
+  mk(-19, 2, 1.15, false); mk(19, 4, 1.0, true); mk(0, 22, 0.75, false);   // father, mother, and the little one: him
+  limb(5, 25, 11, 14, 2.6, BR);                                             // his arm raising the tin cup
+  ctx.fillStyle = '#9aa3ab'; ctx.beginPath(); ctx.moveTo(8, 8); ctx.lineTo(16, 8); ctx.lineTo(14.5, 15); ctx.lineTo(9.5, 15); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#cfd6dc'; ctx.fillRect(7.5, 6.8, 9, 1.8);
+  ctx.fillStyle = '#7a4a22'; ctx.fillRect(-16, 32, 32, 16);                // the organ
+  ctx.fillStyle = '#b08a3a'; for (let i = 0; i < 4; i++) ctx.fillRect(-12 + i * 7, 27, 3, 7);
+  ell(-19, 40, 2.6, 2.6, '#d9a93f'); limb(-19, 40, -22, 44, 1.2, '#d9a93f');   // crank handle
+  ctx.beginPath(); ctx.arc(33, -6, 5.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(230,200,120,.7)'; ctx.fill(); ctx.strokeStyle = '#a77c14'; ctx.lineWidth = 1.5; ctx.stroke();   // mother's tambourine
   ctx.fillStyle = 'rgba(150,140,120,.16)'; ctx.fillRect(-38, -52, 76, 104);                    // a little faded
   ctx.fillStyle = '#2b1b24'; ctx.beginPath(); ctx.moveTo(38, 52); ctx.lineTo(20, 52); ctx.lineTo(38, 34); ctx.closePath(); ctx.fill();   // torn corner
   ctx.fillStyle = 'rgba(200,190,150,.7)'; ctx.fillRect(-42, -56, 16, 7); ctx.fillRect(26, -56, 16, 7);   // old tape
@@ -400,7 +414,7 @@ function drawHospital() {
   ctx.strokeStyle = '#6b5a3a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-70, -28); ctx.lineTo(-70, -42); ctx.moveTo(70, -28); ctx.lineTo(70, -42); ctx.stroke();
   ctx.fillStyle = '#e6e0d0'; ctx.fillRect(-80, -28, 160, 56); ctx.strokeRect(-80, -28, 160, 56);
   ctx.textAlign = 'center'; ctx.font = 'bold 22px Georgia, serif';
-  ctx.fillStyle = '#8f1b1b'; ctx.fillText('REHAB', 0, -3); ctx.fillStyle = '#1a1a1a'; ctx.fillText('$750', 0, 21);
+  ctx.fillStyle = '#8f1b1b'; ctx.fillText('REHAB', 0, -3); ctx.fillStyle = '#1a1a1a'; ctx.fillText('$450', 0, 21);
   ctx.restore();
   for (let i = 0; i < 8; i++) {                                                                                  // striped canopy
     const tl = 1860 + i * 16.25, bl = 1850 + i * 18.75;
