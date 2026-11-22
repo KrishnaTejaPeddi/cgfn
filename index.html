@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+x<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -20,7 +20,7 @@
    - The monkey's look is worked out from mood: dancing -> slowing -> glaring -> crying. */
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-const W = 800, H = 520, GROUND = 440, MX = 420, WORLD = 3000, ENDCAM = 2150, PX = 2480, GOAL = 450;   // PX = where his father lies, GOAL = coins needed to pay for rehab          // MX = monkey's x position
+const W = 800, H = 520, GROUND = 440, MX = 420, WORLD = 3000, ENDCAM = 2150, PX = 2480, GOAL = 200;   // PX = where his father lies, GOAL = coins needed to pay for rehab          // MX = monkey's x position
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 let state = 'title';                 // 'title' or 'play'
@@ -29,7 +29,8 @@ let coins = 0, danceTime = 0, weepTime = 0, drain = 5;
 let flying = [], tears = [], notes = [];
 let cupX = 500, cupY = 330, cupShake = 0, crank = 0;
 let pan = 0, over = false, overTime = 0, lowTime = 0, sawTimer = 0, glance = 0, cam = 0, camV = 0;   // the ending
-let win = 0, monkeyX = MX, runBoost = 0, sparks = [], hearts = [], winSfx = {};   // the good ending
+let win = 0, monkeyX = MX, runBoost = 0, sparks = [], hearts = [], winSfx = {}, rainK = 0.45, rainGain = null;   // the good ending, and the weather
+const DROPS = Array.from({ length: 170 }, () => ({ x: Math.random() * W, y: Math.random() * H, v: 520 + Math.random() * 260, l: 8 + Math.random() * 10 }));
 
 // How much dancing / glaring / crying, each from 0 to 1, based on mood
 function levels() {
@@ -58,8 +59,18 @@ function restart() {
   pan = 0; over = false; overTime = 0; lowTime = 0; glance = 0; cam = 0; camV = 0; flying = []; tears = [];
   win = 0; monkeyX = MX; runBoost = 0; sparks = []; hearts = []; winSfx = {};
 }
+function startRain() {                                       // a soft, steady hiss of rain made from filtered noise
+  if (!ac || rainGain) return;
+  const buf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource(), f = ac.createBiquadFilter();
+  src.buffer = buf; src.loop = true; f.type = 'lowpass'; f.frequency.value = 1800;
+  rainGain = ac.createGain(); rainGain.gain.value = 0;
+  src.connect(f); f.connect(rainGain); rainGain.connect(ac.destination); src.start();
+}
 function toss(x, y) {
   if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  startRain();
   if (ac && ac.state === 'suspended') ac.resume();
   if (state === 'title') { restart(); return; }
   if (win > 0) { if (win > 17) restart(); return; }
@@ -85,6 +96,10 @@ function update(dt) {
   notes = notes.filter(n => n.life > 0);
   sparks.forEach(p => { p.vy += 200 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }); sparks = sparks.filter(p => p.life > 0);
   hearts.forEach(h => { h.y -= 40 * dt; h.life -= dt; }); hearts = hearts.filter(h => h.life > 0);
+  const rainTarget = win > 8 ? 0 : clamp(0.45 + 0.4 * (1 - mood / 100) + (pan > 0 ? 0.15 : 0), 0, 1);   // heavier as hope fades
+  rainK += (rainTarget - rainK) * Math.min(1, dt * 0.7);
+  for (const d of DROPS) { d.y += d.v * dt; d.x -= d.v * 0.18 * dt; if (d.y > H) { d.y = -20; d.x = Math.random() * (W + 150); } if (d.x < -20) d.x += W + 40; }
+  if (rainGain) rainGain.gain.value = 0.035 * rainK;
 
   if (state === 'play' && pan === 0 && win === 0 && !over) {
     elapsed += dt;
@@ -167,11 +182,19 @@ function ell(x, y, rx, ry, col) {
 
 function drawBG(L) {
   const WW = WORLD;                                     // the whole street, drawn as one piece
+  const dawn = win > 8 ? clamp((win - 8) / 6, 0, 1) : 0;
+  const mixc = (a, b, t) => 'rgb(' + a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',') + ')';
   let g = ctx.createLinearGradient(0, 0, 0, GROUND);
-  g.addColorStop(0, '#0d1030'); g.addColorStop(1, '#2a1a3d');
+  g.addColorStop(0, mixc([13, 16, 48], [240, 150, 110], dawn)); g.addColorStop(1, mixc([42, 26, 61], [255, 210, 150], dawn));
   ctx.fillStyle = g; ctx.fillRect(0, 0, WW, H);
+  ctx.save(); ctx.translate(cam * 0.5, 0);                                             // far buildings scroll slower than the street: it gives depth
+  ctx.fillStyle = mixc([14, 16, 38], [150, 100, 100], dawn);
+  for (let i = 0; i < 42; i++) ctx.fillRect(i * 52, 74 - (22 + 28 * Math.abs(Math.sin(i * 1.7)) + (i % 5 === 0 ? 14 : 0)), 46, 60);
+  ctx.fillStyle = 'rgba(232,201,122,' + 0.55 * (1 - 0.6 * dawn) + ')';
+  for (let i = 0; i < 42; i++) if (i % 3 !== 1) ctx.fillRect(i * 52 + 8 + (i % 4) * 8, 60 - (i % 3) * 9, 3, 4);
+  ctx.restore();
   // brick wall
-  ctx.fillStyle = '#2b1b24'; ctx.fillRect(0, 70, WW, GROUND - 70);
+  ctx.fillStyle = mixc([43, 27, 36], [84, 58, 62], dawn); ctx.fillRect(0, 70, WW, GROUND - 70);
   ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1.5; ctx.beginPath();
   for (let y = 70, r = 0; y < GROUND; y += 26, r++) {
     ctx.moveTo(0, y); ctx.lineTo(WW, y);
@@ -179,18 +202,19 @@ function drawBG(L) {
   }
   ctx.stroke();
   // cobblestones
-  ctx.fillStyle = '#1a1520'; ctx.fillRect(0, GROUND, WW, H - GROUND);
+  ctx.fillStyle = mixc([26, 21, 32], [48, 40, 50], dawn); ctx.fillRect(0, GROUND, WW, H - GROUND);
   ctx.strokeStyle = 'rgba(255,255,255,.07)'; ctx.lineWidth = 2;
   for (let y = GROUND + 14, r = 0; y < H; y += 24, r++) {
     for (let x = (r % 2) * 30; x < WW; x += 60) { ctx.beginPath(); ctx.ellipse(x + 30, y, 26, 9, 0, 0, Math.PI * 2); ctx.stroke(); }
   }
   // street lamps, evenly spaced along the street: they flicker when the monkey is upset
-  let li = 0.9 - 0.4 * L.g;
+  let li = (0.9 - 0.4 * L.g) * (1 - 0.6 * dawn);
   if (L.g > 0.3) li *= 0.55 + 0.45 * Math.abs(Math.sin(tNow * 17 + Math.sin(tNow * 5) * 3));
   for (const lx of [660, 660 + W]) {
     g = ctx.createRadialGradient(lx, 120, 10, lx, 120, 360);
     g.addColorStop(0, 'rgba(255,205,120,' + (li * 0.55) + ')'); g.addColorStop(1, 'rgba(255,205,120,0)');
     ctx.fillStyle = g; ctx.fillRect(lx - 360, 0, 720, H);
+    ell(lx, GROUND + 34, 170, 24, 'rgba(255,205,120,' + li * 0.14 + ')');                 // pool of light on the wet cobbles
     ctx.fillStyle = '#0c0910'; ctx.fillRect(lx - 4, 120, 8, GROUND - 120);
     ctx.fillStyle = 'rgb(255,' + Math.round(200 + 40 * li) + ',140)'; ctx.fillRect(lx - 16, 104, 32, 18);
   }
@@ -258,6 +282,11 @@ function litter(x, dy, k) {                                  // loose rubbish on
 function puddle(x, dy, w) {                                  // wet patch that catches a little light
   if (!inView(x)) return;
   ell(x, GROUND + dy, w, w * 0.22, 'rgba(70,80,120,.45)'); ell(x - w * 0.2, GROUND + dy - 1, w * 0.45, w * 0.08, 'rgba(255,230,180,.18)');
+  for (let k = 0; k < 2; k++) {
+    const u = (tNow * 0.7 + k * 0.5 + x * 0.013) % 1;
+    ctx.strokeStyle = 'rgba(200,215,240,' + 0.4 * (1 - u) * rainK + ')'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(x + (k ? 0.25 : -0.2) * w, GROUND + dy, w * 0.25 * u, w * 0.06 * u, 0, 0, Math.PI * 2); ctx.stroke();
+  }
 }
 
 function manhole(x) {                                        // steam slowly drifts up from the street
@@ -304,13 +333,51 @@ function flyer(x, y, col) {                                  // small torn notic
   for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.moveTo(x + 3, y + 5 + i * 5); ctx.lineTo(x + 19 - (i % 2) * 5, y + 5 + i * 5); ctx.stroke(); }
 }
 
+function bed(x) {                                            // where he sleeps: flattened cardboard, a folded blanket, a banana skin
+  if (!inView(x)) return;
+  const y = GROUND + 34;
+  ctx.fillStyle = '#7a6140'; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 92, y); ctx.lineTo(x + 100, y + 30); ctx.lineTo(x - 8, y + 30); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x + 46, y); ctx.lineTo(x + 46, y + 30); ctx.stroke();
+  ctx.fillStyle = '#5d7088'; ctx.beginPath(); ctx.ellipse(x + 30, y + 12, 26, 8, -0.05, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#42536a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x + 14, y + 9); ctx.lineTo(x + 46, y + 7); ctx.moveTo(x + 14, y + 15); ctx.lineTo(x + 46, y + 13); ctx.stroke();
+  ctx.strokeStyle = '#a89a3a'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x + 68, y + 22); ctx.quadraticCurveTo(x + 76, y + 29, x + 84, y + 21); ctx.stroke();
+}
+
+function chalkFamily(x) {                                    // a child's chalk drawing on the pavement: three figures holding hands, and a heart
+  if (!inView(x)) return;
+  ctx.strokeStyle = 'rgba(235,232,220,.5)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  const base = GROUND + 78;
+  const fig = (fx, h) => {
+    ctx.beginPath(); ctx.arc(fx, base - h - 4, 3.5, 0, Math.PI * 2);
+    ctx.moveTo(fx, base - h); ctx.lineTo(fx, base - h * 0.4); ctx.moveTo(fx, base - h * 0.4); ctx.lineTo(fx - 4, base); ctx.moveTo(fx, base - h * 0.4); ctx.lineTo(fx + 4, base); ctx.stroke();
+  };
+  fig(x, 24); fig(x + 30, 12); fig(x + 60, 22);              // father, the little one, mother
+  ctx.beginPath(); ctx.moveTo(x, base - 18); ctx.lineTo(x + 30, base - 9); ctx.lineTo(x + 60, base - 17); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x + 30, base - 40); ctx.bezierCurveTo(x + 20, base - 48, x + 26, base - 56, x + 30, base - 50); ctx.bezierCurveTo(x + 34, base - 56, x + 40, base - 48, x + 30, base - 40); ctx.stroke();
+}
+
+// what is on the ground around his parents: a flattened cardboard bed, and what he brought them
+function parentsBed() {
+  ctx.fillStyle = '#7a6140'; ctx.beginPath(); ctx.moveTo(PX - 150, GROUND + 34); ctx.lineTo(PX + 350, GROUND + 34); ctx.lineTo(PX + 366, GROUND + 80); ctx.lineTo(PX - 166, GROUND + 80); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(PX + 100, GROUND + 34); ctx.lineTo(PX + 104, GROUND + 80); ctx.moveTo(PX - 158, GROUND + 58); ctx.lineTo(PX + 358, GROUND + 58); ctx.stroke();
+  ell(PX + 230, GROUND + 74, 50, 6, 'rgba(60,40,20,.35)');                                 // damp stain
+  ctx.strokeStyle = '#7a6a2a'; ctx.lineWidth = 8; ctx.lineCap = 'round';                   // the banana he brought, gone rotten
+  ctx.beginPath(); ctx.moveTo(PX - 150, GROUND + 58); ctx.quadraticCurveTo(PX - 133, GROUND + 72, PX - 112, GROUND + 58); ctx.stroke();
+  ell(PX - 140, GROUND + 66, 2, 1.6, '#1a1408'); ell(PX - 128, GROUND + 67, 2.4, 1.8, '#1a1408'); ell(PX - 118, GROUND + 62, 1.8, 1.4, '#1a1408');
+  for (const st of [[PX - 142, 6], [PX - 124, 4]]) for (let i = 0; i < st[1]; i++) { ell(st[0], GROUND + 78 - i * 3.2, 7, 3, '#d9b43e'); ell(st[0], GROUND + 77 - i * 3.2, 7, 2.2, '#f2c94c'); }   // neat stacks of coins he saved
+}
+function parentsBlanket() {                                  // a small blanket tucked over his mother's legs
+  ctx.fillStyle = '#9fb3c8'; ctx.beginPath(); ctx.moveTo(PX + 136, GROUND + 66); ctx.quadraticCurveTo(PX + 170, GROUND + 52, PX + 204, GROUND + 58); ctx.lineTo(PX + 204, GROUND + 74); ctx.quadraticCurveTo(PX + 170, GROUND + 80, PX + 136, GROUND + 76); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#6f86a2'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(PX + 142, GROUND + 68); ctx.quadraticCurveTo(PX + 172, GROUND + 58, PX + 200, GROUND + 63); ctx.moveTo(PX + 142, GROUND + 74); ctx.quadraticCurveTo(PX + 172, GROUND + 68, PX + 200, GROUND + 70); ctx.stroke();
+}
+
 function drawStreetProps() {
   // on the walls
   drainpipe(40); drainpipe(1690); drainpipe(2190);
   flyer(560, 210, '#b9b08a'); flyer(588, 238, '#8fa3b0'); flyer(1160, 300, '#c4a98a'); flyer(1495, 250, '#a8b08a');
   boardedWindow(900, 160); boardedWindow(1600, 150); graffiti(1510, 250);
   // on the ground
-  boxes(55); trashCan(735, 0, true); bagPile(790);
+  bed(26); chalkFamily(585); trashCan(735, 0, true); bagPile(790);
   trashCan(880, 0.05, true); puddle(960, 34, 55); hydrant(1130); manhole(1560); bagPile(1480); trashCan(1180, -0.04, false);
   puddle(1330, 40, 70); boxes(2215); trashCan(2160, 0.03, true);
   for (const l of [[80,40,0],[330,58,3],[600,34,1],[690,60,2],[755,30,4],[850,50,3],[910,28,0],[940,64,1],[1010,40,2],[1075,58,0],[1160,30,4],[1230,62,3],[1290,36,1],[1360,56,0],[1420,30,2],[1470,66,3],[1520,40,0],[1590,54,1],[1640,32,4],[1690,60,2],[1750,38,0],[1830,64,3],[1990,44,0],[2040,58,1],[2120,34,2],[2400,30,0],[2420,55,3],[2395,55,2],[2780,50,4],[2900,36,0]]) litter(l[0], l[1], l[2]);
@@ -414,7 +481,7 @@ function drawHospital() {
   ctx.strokeStyle = '#6b5a3a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-70, -28); ctx.lineTo(-70, -42); ctx.moveTo(70, -28); ctx.lineTo(70, -42); ctx.stroke();
   ctx.fillStyle = '#e6e0d0'; ctx.fillRect(-80, -28, 160, 56); ctx.strokeRect(-80, -28, 160, 56);
   ctx.textAlign = 'center'; ctx.font = 'bold 22px Georgia, serif';
-  ctx.fillStyle = '#8f1b1b'; ctx.fillText('REHAB', 0, -3); ctx.fillStyle = '#1a1a1a'; ctx.fillText('$450', 0, 21);
+  ctx.fillStyle = '#8f1b1b'; ctx.fillText('REHAB', 0, -3); ctx.fillStyle = '#1a1a1a'; ctx.fillText('$200', 0, 21);
   ctx.restore();
   for (let i = 0; i < 8; i++) {                                                                                  // striped canopy
     const tl = 1860 + i * 16.25, bl = 1850 + i * 18.75;
@@ -539,6 +606,7 @@ function drawMonkey(L) {
   const s = Math.sin(ph), d = L.d, g = L.g, c = L.c;
   const BR = '#5b3a22', DK = '#2d1b10', CR = '#e6cfa8';
   const bounce = Math.abs(s) * d * 16;
+  ell(monkeyX, GROUND + 8, 46 - bounce * 0.8, 8, 'rgba(0,0,0,.35)');
   ctx.save();
   ctx.translate(monkeyX, GROUND - bounce);
   ctx.rotate(s * d * 0.07 + Math.sin(tNow * 28) * 0.012 * c);
@@ -594,13 +662,14 @@ function drawMonkey(L) {
   }
 
   // eyes: when he glares, the pupils lock onto the camera
-  const ery = 6 - 2.5 * g;
+  const blink = (g < 0.3 && (tNow % 3.4) < 0.1) ? 0.15 : 1;      // he blinks, until he starts to glare
+  const ery = (6 - 2.5 * g) * blink;
   for (const sx of [-1, 1]) {
     const ex = sx * 10;
     ell(ex, 3, 7, ery, '#fffdf5');
     if (c > 0) { ctx.strokeStyle = 'rgba(190,40,50,' + 0.7 * c + ')'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(ex, 3, 7, ery, 0, 0, Math.PI * 2); ctx.stroke(); }
     const px = ex + (1 - g) * Math.sin(ph * 0.5) * 2.5, py = 3 - c * 1.5, pr = 3.6 + g * 0.8;
-    ell(px, py, pr, pr, '#150a05'); ell(px - 1, py - 1.2, 1.1, 1.1, '#fff');
+    if (blink > 0.5) { ell(px, py, pr, pr, '#150a05'); ell(px - 1, py - 1.2, 1.1, 1.1, '#fff'); }
     // eyebrows: angry (inner ends down) then sad (inner ends up)
     const a = g * (1 - c), sd = c;
     const inner = -7 + 5 * a - 8 * sd, outer = -7 - 3 * a + 4 * sd;
@@ -718,16 +787,17 @@ function elder(cx, cy, dir, fur, sc, extra) {
 // the monkey's parents, on the cobblestones in the second screen of the world
 function drawParents() {
   if (win > 0) { drawParentsHappy(); return; }
+  parentsBed();
   elder(PX, GROUND + 44, 1, '#5e5b57', 1, true);                      // father
-  elder(PX + 215, GROUND + 66, -1, '#6a5f55', 0.85, false);                 // mother
+  elder(PX + 215, GROUND + 66, -1, '#6a5f55', 0.85, false); parentsBlanket();                 // mother
   ctx.save(); ctx.translate(PX + 108, GROUND + 80); ctx.rotate(1.35);       // a tin cup knocked over
   ctx.fillStyle = '#9aa3ab'; ctx.beginPath(); ctx.moveTo(-14, -14); ctx.lineTo(14, -14); ctx.lineTo(10, 12); ctx.lineTo(-10, 12); ctx.closePath(); ctx.fill();
   ctx.fillStyle = '#cfd6dc'; ctx.fillRect(-16, -17, 32, 5);
   ctx.restore();
   ctx.fillStyle = '#f2c94c'; ctx.strokeStyle = '#a77c14'; ctx.lineWidth = 1;
   for (const q of [[475, 84], [492, 92], [468, 96]]) { ctx.beginPath(); ctx.ellipse(PX + q[0] - 330, GROUND + q[1], 8, 3.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
-  for (let i = 0; i < 12; i++) {                                           // flies
-    const hx = i < 6 ? PX - 74 : PX + 276, f = i * 1.7;
+  for (let i = 0; i < 14; i++) {                                           // flies
+    const hx = i < 5 ? PX - 74 : i < 9 ? PX - 130 : PX + 276, f = i * 1.7;
     ell(hx + Math.cos(tNow * (2 + i * 0.6) + f) * 30, GROUND + 28 + Math.sin(tNow * (3 + i * 0.5) + f) * 20, 1.7, 1.7, '#000');
   }
 }
@@ -820,6 +890,18 @@ function draw() {
   if (cam > 0.5) drawParents();
   drawEffects();
   ctx.restore();
+  const dawn = win > 8 ? clamp((win - 8) / 6, 0, 1) : 0;                               // in the good ending the sky slowly turns to morning
+  ctx.strokeStyle = 'rgba(190,205,230,.3)'; ctx.lineWidth = 1; ctx.beginPath();        // rain
+  for (let i = 0, n = Math.floor(DROPS.length * rainK); i < n; i++) { const d = DROPS[i]; ctx.moveTo(d.x, d.y); ctx.lineTo(d.x + d.l * 0.18, d.y - d.l); }
+  ctx.stroke();
+  if (dawn > 0) { ctx.fillStyle = 'rgba(255,190,120,' + 0.14 * dawn + ')'; ctx.fillRect(0, 0, W, H); }
+  if (dawn > 0.4) {                                                                    // and the first birds appear
+    ctx.strokeStyle = 'rgba(40,30,40,' + (dawn - 0.4) + ')'; ctx.lineWidth = 1.6;
+    for (let i = 0; i < 4; i++) {
+      const bx = (tNow * 45 + i * 130) % (W + 80) - 40, by = 26 + i * 12 + Math.sin(tNow * 2 + i) * 4, fl = Math.sin(tNow * 9 + i) * 4;
+      ctx.beginPath(); ctx.moveTo(bx - 7, by - fl); ctx.quadraticCurveTo(bx - 3, by - 4, bx, by); ctx.quadraticCurveTo(bx + 3, by - 4, bx + 7, by - fl); ctx.stroke();
+    }
+  }
   // the room gets darker as he gets angrier
   const v = ctx.createRadialGradient(W / 2, H / 2, 150, W / 2, H / 2, 520);
   v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,' + (0.3 + 0.5 * L.g) + ')');
